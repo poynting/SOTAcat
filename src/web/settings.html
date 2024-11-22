@@ -45,9 +45,11 @@
       <a href="http://sotacat.local" target="_blank">http://sotacat.local</a>
       (iPhone, MacOS, Windows) or to
       <a href="http://192.168.4.1" target="_blank">http://192.168.4.1</a> or
-      when using an Android hotspot, install the "Bonjour Browser" app from the
-      Google Play store and use that app to navigate to the "sotacat.local"
-      address. <br /><br />
+      when using an Android hotspot, install the
+      <a href="https://play.google.com/store/apps/details?id=de.wellenvogel.bonjourbrowser"
+         target="_blank">Bonjour Browser</a> app
+      from the Google Play store and use that app to navigate to the
+      "sotacat.local" address. <br /><br />
     </div>
     <div class="wifi-client">
       <h3><b>Client 1:</b> ex. SOTACAT connects to Android hotspot</h3>
@@ -145,6 +147,24 @@
     <input type="submit" class="save-button" value="Save and Reboot" />
   </form>
   <hr />
+<h2>Firmware Update</h2>
+<form id="ota-update-form" enctype="multipart/form-data" class="firmware-update-form">
+  <div class="firmware-client">
+    <div class="firmware-row">
+      <div class="firmware-label">
+        <label for="ota-file" class="file-label">Select firmware (.bin) file</label>
+      </div>
+      <input type="file" id="ota-file" name="ota-file" accept=".bin" required onchange="updateButtonText()" style="display: none;" />
+    </div>
+    <div class="firmware-row">
+      <button type="button" id="upload-button" class="upload-button" onclick="uploadFirmware()" disabled>Upload Firmware</button>
+    </div>
+  </div>
+</form>
+<div id="ota-status"></div>
+<hr />
+  <hr />
+
   <!--
     <form
       action="/api/v1/factoryReset"

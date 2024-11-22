@@ -1,19 +1,20 @@
 function syncTime() {
-    // Get the browser's current utc time in whole seconds
+    // Get the browser's current UTC time in whole seconds
     const now = Math.round(Date.now() / 1000);
 
-     // Create the PUT request using Fetch API
+    // Create the PUT request using Fetch API
     fetch('/api/v1/time?time=' + now, { method: 'PUT' })
     .then(response => {
-        if (response.ok) {
-            return response.json();
+        if (response.status === 204) {
+            console.log('Time sync successful');
+            return null;  // No content, sync was successful
+        } else if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.error || 'Unknown error');
+            });
         }
-        throw new Error('Network response was not ok.');
     })
-    .then(data => {
-        console.log('Time sync successful:', data);
-    })
-    .catch(error => console.error('Fetch error:', error));
+    .catch(error => console.error('Time sync failed:', error.message));
 }
 
 function togglePasswordVisibility(inputId) {
@@ -59,7 +60,7 @@ function saveSettings() {
     .then(response => response.json())
     .then(data => {
         console.log('Success:', data);
-        alert('Settings saved successfully! Your SOTACAT is rebooting with the new settings...');
+        alert("Settings saved successfully!\nYour SOTAcat is rebooting with the new settings.\nPlease restart your browser.");
     })
     .catch((error) => {
         console.error('Error:', error);
@@ -108,6 +109,66 @@ function onSubmitSettings(event) {
     }
 
     saveSettings();
+}
+
+
+function updateButtonText() {
+    const fileInput = document.getElementById('ota-file');
+    const uploadButton = document.getElementById('upload-button');
+
+    if (fileInput.files.length > 0) {
+        const fileName = fileInput.files[0].name;
+        uploadButton.textContent = `Upload ${fileName}`;
+        uploadButton.disabled = false; // Enable the button once a file is selected
+    } else {
+        uploadButton.textContent = 'Upload Firmware';
+        uploadButton.disabled = true; // Keep the button disabled if no file is selected
+    }
+}
+
+function uploadFirmware() {
+    const otaFileInput = document.getElementById('ota-file');
+    const otaStatus = document.getElementById('ota-status');
+    const file = otaFileInput.files[0];
+
+    if (!file) {
+        alert('Please select a firmware file to upload.');
+        return;
+    }
+
+    const blob = new Blob([file], { type: 'application/octet-stream' });
+
+    fetch('/api/v1/ota', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/octet-stream' },
+        body: blob
+    })
+    .then(response => {
+        if (response.ok) {
+            // Successful OTA upload, no content returned
+            otaStatus.innerHTML = 'Firmware upload successful. SOTAcat will now reboot.';
+            alert("Firmware upload successful.\nYour SOTAcat is rebooting with the new firmware.\nPlease restart your browser.");
+            return null;  // No further processing needed
+        }
+        else {
+            // Error occurred, expecting a JSON error message in a "text/plain" content type
+            return response.text().then(text => {
+                let errorData;
+                try {
+                    errorData = JSON.parse(text);
+                }
+                catch (e) {
+                    throw new Error('Failed to parse error response from server');
+                }
+                throw new Error(errorData.error || 'Unknown error occurred');
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Firmware upload error:', error);
+        otaStatus.innerHTML = `Firmware upload failed: ${error.message}`;
+        alert(`Firmware upload failed: ${message.error}`);
+    });
 }
 
 gSubmitSettingsAttached = false;

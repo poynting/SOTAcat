@@ -29,6 +29,10 @@ async function updateSotaTable()
 
         if (spot.duplicate)
             row.classList.add('duplicate-row');
+        if (spot.type && spot.type !== "" && spot.type !== "NORMAL") { // "" is a normal spot, other values are not
+            row.classList.add('duplicate-row');
+            row.classList.add('qrt-row');
+        }
 
         const formattedTime = spot.timestamp.getUTCHours().toString().padStart(2, '0') + ':' + spot.timestamp.getUTCMinutes().toString().padStart(2, '0');
         row.insertCell().textContent = formattedTime;
@@ -46,11 +50,13 @@ async function updateSotaTable()
 
         const frequencyCell = row.insertCell();
         const frequencyLink = document.createElement('a');
-        frequencyLink.href = `#`; // Placeholder
-        frequencyLink.textContent = spot.frequency;
-        frequencyLink.onclick = function(event) {
-            event.preventDefault(); // Prevent default link behavior
-            tuneRadioMHz(spot.frequency, spot.mode);
+        frequencyLink.href = '#';  // Placeholder href to ensure link styling
+        if (spot.frequency && typeof spot.frequency === 'number') {
+           frequencyLink.textContent = spot.frequency.toFixed(3);
+           frequencyLink.onclick = function(event) {
+              event.preventDefault(); // Prevent default link behavior
+              tuneRadioMHz(spot.frequency, spot.mode);
+            }
         }
         frequencyCell.appendChild(frequencyLink);
 
@@ -61,7 +67,7 @@ async function updateSotaTable()
         callsignCell.appendChild(callsignLink);
 
         row.insertCell().textContent = spot.activatorName;
-        row.insertCell().textContent = spot.summitDetails;
+        row.insertCell().textContent = spot.details;
         row.insertCell().textContent = spot.comments;
     });
 
@@ -82,6 +88,27 @@ function loadHistoryDurationState() {
     // If there's a saved state, convert it to Boolean and set the checkbox
     if (savedState !== null)
         document.getElementById('historyDurationSelector').value = savedState;
+}
+
+// Auto-refresh spots
+
+function saveAutoRefreshCheckboxState()
+{
+    const isChecked = document.getElementById('autoRefreshSelector').checked;
+    localStorage.setItem('autoRefresh', isChecked);
+}
+
+function changeAutoRefreshCheckboxState(autoRefresh) {
+}
+
+function loadAutoRefreshCheckboxState()
+{
+    const savedState = localStorage.getItem('autoRefresh');
+    // If there's a saved state, convert it to Boolean and set the checkbox
+    if (savedState !== null) {
+        document.getElementById('autoRefreshSelector').checked = (savedState === 'true');
+        changeAutoRefreshCheckboxState(document.getElementById('autoRefreshSelector').checked);
+    }
 }
 
 // Hide/Show Spot Dups
@@ -163,11 +190,12 @@ function changeModeFilter(selectedMode) {
 function sotaOnAppearing() {
     console.info('SOTA tab appearing');
 
+    loadAutoRefreshCheckboxState();
     loadShowSpotDupsCheckboxState();
     loadModeFilterState();
     loadHistoryDurationState();
 
-    refreshSotaPotaJson();
+    refreshSotaPotaJson(false);
     if (gRefreshInterval == null)
         gRefreshInterval = setInterval(refreshSotaPotaJson, 60 * 1000); // one minute
 

@@ -1,7 +1,8 @@
-#include <memory>
 #include "globals.h"
 #include "kx_radio.h"
 #include "webserver.h"
+
+#include <memory>
 
 #include <esp_log.h>
 static const char * TAG8 = "sc:hdl_time";
@@ -22,7 +23,8 @@ struct time_hms {
  * @param one Character for the ones place.
  * @return Combined integer value.
  */
-inline int decode_couplet(char ten, char one) {
+inline int decode_couplet (char ten, char one) {
+    // note high bit 0x80 may be set on tens digit of each couplet, to represent the decimal point
     return 10 * ((ten & 0x7f) - '0') + one - '0';
 }
 
@@ -32,22 +34,22 @@ inline int decode_couplet(char ten, char one) {
  * @param radio_time Pointer to store the decoded time.
  * @return true if successful, false otherwise.
  */
-static bool get_radio_time(time_hms * radio_time) {
-    ESP_LOGV(TAG8, "trace: %s()", __func__);
-    char buf[sizeof("DS@@123456af;")];  // sizeof arg looks like expected response
-    if (!kxRadio.get_from_kx_string("DS", SC_KX_COMMUNICATION_RETRIES, buf, sizeof(buf)-1))  // read time from VFO A)
+static bool get_radio_time (time_hms * radio_time) {
+    ESP_LOGV (TAG8, "trace: %s()", __func__);
+    char buf[sizeof ("DS@@123456af;")];                                                          // sizeof arg looks like expected response
+    if (!kxRadio.get_from_kx_string ("DS", SC_KX_COMMUNICATION_RETRIES, buf, sizeof (buf) - 1))  // read time from VFO A)
         return false;
-    buf[sizeof(buf)-1] = '\0';
-    ESP_LOGV(TAG8, "time as read on display is %s", buf);
+    buf[sizeof (buf) - 1] = '\0';
+    ESP_LOGV (TAG8, "time as read on display is %s", buf);
 
     // expect buf to look like
     //          DS@@1²3´5¶af;
     // index    0123456789012
-    // note high bit 0x80 is set on ones digit of each couplet, to represent the decimal point
-    radio_time->hrs = decode_couplet(buf[4], buf[5]);
-    radio_time->min = decode_couplet(buf[6], buf[7]);
-    radio_time->sec = decode_couplet(buf[8], buf[9]);
-    ESP_LOGV(TAG8, "radio time is %02d:%02d:%02d", radio_time->hrs, radio_time->min, radio_time->sec);
+    // note high bit 0x80 may be set on tens digit of each couplet, to represent the decimal point
+    radio_time->hrs = decode_couplet (buf[4], buf[5]);
+    radio_time->min = decode_couplet (buf[6], buf[7]);
+    radio_time->sec = decode_couplet (buf[8], buf[9]);
+    ESP_LOGV (TAG8, "radio time is %02d:%02d:%02d", radio_time->hrs, radio_time->min, radio_time->sec);
     return true;
 }
 
@@ -58,13 +60,13 @@ static bool get_radio_time(time_hms * radio_time) {
  * @param client_time Pointer to store the converted time.
  * @return true on success, false on failure.
  */
-static bool convert_client_time(long int long_time, time_hms * client_time) {
-    ESP_LOGV(TAG8, "trace: %s()", __func__);
+static bool convert_client_time (long int long_time, time_hms * client_time) {
+    ESP_LOGV (TAG8, "trace: %s()", __func__);
     // Convert long int to time_t
-    time_t my_time = static_cast<time_t>(long_time);
+    time_t my_time = static_cast<time_t> (long_time);
 
     // Convert to UTC time structure
-    struct tm *utc_time = gmtime(&my_time);
+    struct tm * utc_time = gmtime (&my_time);
 
     if (utc_time) {
         // Extract hours, minutes, and seconds
@@ -74,7 +76,7 @@ static bool convert_client_time(long int long_time, time_hms * client_time) {
         return true;
     }
 
-    ESP_LOGE(TAG8, "error converting time %ld", long_time);
+    ESP_LOGE (TAG8, "error converting time %ld", long_time);
     return false;
 }
 
@@ -85,17 +87,26 @@ static bool convert_client_time(long int long_time, time_hms * client_time) {
  * @param selector Component to adjust (e.g., "SWT19;" for hours).
  * @param diff Amount to adjust, positive for up, negative for down.
  */
-static void adjust_component(char const * selector, int diff) {
-    ESP_LOGV(TAG8, "trace: %s('%s', %d)", __func__, selector, diff);
+static void adjust_component (char const * selector, int diff) {
+    ESP_LOGV (TAG8, "trace: %s('%s', %d)", __func__, selector, diff);
 
-    char dir[6 + 3 * 60] = {};  // size: "SWTnn;" = 6, + "UP;"|"DN;" = 3, * at most once per sec or min or hour = 60
-    strcpy(dir, selector);
+    if (!diff)
+        return;
+
+    size_t abs_diff = std::abs (diff);
+    assert (abs_diff <= 60);
+    const size_t adjustment_size             = (sizeof ("SWTnn;") - 1) + abs_diff * (sizeof ("UP;") - 1) + 1;
+    char         adjustment[adjustment_size] = {0};
+    strcat (adjustment, selector);
     for (int ii = diff; ii > 0; --ii)
-        strcat(dir, "UP;");
+        strcat (adjustment, "UP;");
     for (int ii = diff; ii < 0; ++ii)
-        strcat(dir, "DN;");
-    ESP_LOGI(TAG8, "adjustment should be %s", dir);
-    kxRadio.put_to_kx_command_string(dir, 1);
+        strcat (adjustment, "DN;");
+    ESP_LOGV (TAG8, "adjustment should be %s", adjustment);
+    kxRadio.put_to_kx_command_string (adjustment, 1);
+
+    // empirically determined delay to allow radio to complete the action
+    vTaskDelay (pdMS_TO_TICKS (30 * abs_diff));
 }
 
 /**
@@ -104,18 +115,18 @@ static void adjust_component(char const * selector, int diff) {
  * @param param_value New time value as a string.
  * @return true on successful update, false on failure.
  */
-static bool set_time(char const * param_value) {
-    ESP_LOGV(TAG8, "trace: %s()", __func__);
+static bool set_time (char const * param_value) {
+    ESP_LOGV (TAG8, "trace: %s()", __func__);
 
     long     time_value = atoi (param_value);  // Convert the parameter to an integer
     time_hms client_time;
     if (!convert_client_time (time_value, &client_time))
         return false;
 
-    const std::lock_guard<Lockable> lock(kxRadio);
-    time_hms radio_time;
-    kxRadio.put_to_kx("MN", 3, 73, SC_KX_COMMUNICATION_RETRIES); // enter time menu
-    if (!get_radio_time (&radio_time)) // read the screen; VFO A shows the time
+    const std::lock_guard<Lockable> lock (kxRadio);
+    time_hms                        radio_time;
+    kxRadio.put_to_kx ("MN", 3, 73, SC_KX_COMMUNICATION_RETRIES);  // enter time menu
+    if (!get_radio_time (&radio_time))                             // read the screen; VFO A shows the time
         return false;
 
     // set synced time in this order (sec, min, hrs) to be most sensitive to current time
@@ -135,32 +146,15 @@ static bool set_time(char const * param_value) {
  * @param req Pointer to the HTTP request structure.  The "time" query parameter
  *            is expected to hold the seconds since UTC epoch.
  */
-esp_err_t handler_time_put(httpd_req_t *req)
-{
+esp_err_t handler_time_put (httpd_req_t * req) {
     showActivity();
 
-    ESP_LOGV(TAG8, "trace: %s()", __func__);
+    ESP_LOGV (TAG8, "trace: %s()", __func__);
 
-    // Get the length of the URL query
-    size_t buf_len = httpd_req_get_url_query_len(req) + 1;
-    if (buf_len <= 1)
-        REPLY_WITH_FAILURE(req, 404, "missing query string");
+    STANDARD_DECODE_SOLE_PARAMETER (req, "time", param_value);
 
-    std::unique_ptr<char[]> buf(new char[buf_len]);
-    if (!buf)
-        REPLY_WITH_FAILURE(req, 500,  "heap allocation failed");
-    char * unsafe_buf = buf.get(); // reference to an ephemeral buffer
-
-    // Get the URL query
-    if (httpd_req_get_url_query_str(req, unsafe_buf, buf_len) != ESP_OK)
-        REPLY_WITH_FAILURE(req, 404, "query parsing error");
-
-    char param_value[32];
-    if (httpd_query_key_value(unsafe_buf, "time", param_value, sizeof(param_value)) != ESP_OK)
-        REPLY_WITH_FAILURE(req, 404, "parameter parsing error");
-
-    if (!set_time(param_value))
-        REPLY_WITH_FAILURE(req, 500, "failed to set time");
+    if (!set_time (param_value))
+        REPLY_WITH_FAILURE (req, HTTPD_500_INTERNAL_SERVER_ERROR, "failed to set time");
 
     REPLY_WITH_SUCCESS();
 }

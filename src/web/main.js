@@ -28,9 +28,9 @@ function tuneRadioHz(frequency, mode)
 
     fetch('/api/v1/frequency?frequency=' + frequency, { method: 'PUT' })
     .then(response => {
-        console.log('Frequency updated successfully');
         if (response.ok) {
-                fetch('/api/v1/rxBandwidth?bw=' + useMode, { method: 'PUT' })
+                console.log('Frequency updated successfully');
+                fetch('/api/v1/mode?bw=' + useMode, { method: 'PUT' })
                 .then(response => {
                     if (response.ok)    {   console.log('Mode updated successfully');   }
                     else                {   console.error('Error updating mode');       }
@@ -85,7 +85,7 @@ refreshVersion(); // Initial and only refresh - the UI only needs to know this o
 // ----------------------------------------------------------------------------
 function refreshUTCClock()
 {
-    // Update the UTC clock, but only show the hours and the minutes and nothging else
+    // Update the UTC clock, but only show the hours and the minutes and nothing else
     const utcTime = new Date().toUTCString();
     document.getElementById('currentUTCTime').textContent = utcTime.slice(17, 22);
 }
@@ -215,16 +215,19 @@ function openTab(tabName)
 // ----------------------------------------------------------------------------
 
 // Function to calculate distance between two points using the Haversine formula
+// returns distance in kilometers
 function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth's radius in kilometers
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+    function toRad(x) { return x * Math.PI / 180; }
+    function squared (x) { return x * x }
+
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = squared(Math.sin(dLat / 2)) +
+          Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+          squared(Math.sin(dLon / 2));
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
 }
 
 async function getLocation() {
@@ -277,12 +280,12 @@ const distanceCache = {};
 // Return an array sorted by descending timestamp
 async function enrichSpots(spots,
                            baseurl,
-                           getCodeFunc,
                            getTimeFunc,
-                           getActivatorFunc) {
-
+                           getActivationLocationFunc,
+                           getActivatorFunc,
+                           getLocationDetailsFunc) {
     spots.forEach(spot => {
-        spot.point = getCodeFunc(spot);
+        spot.point = getActivationLocationFunc(spot);
         spot.hertz = spot.frequency * 1000 * 1000;
         spot.timestamp = getTimeFunc(spot);
         spot.baseCallsign = getActivatorFunc(spot).split("/")[0];
@@ -290,6 +293,8 @@ async function enrichSpots(spots,
         spot.modeType = spot.mode;
         if (!["CW", "SSB", "FM", "FT8", "DATA"].includes(spot.modeType))
             spot.modeType = "OTHER";
+        spot.details = getLocationDetailsFunc(spot);
+        spot.type = ("type" in spot) ? spot.type : null;
     });
 
     // find duplicates
@@ -312,7 +317,8 @@ async function enrichSpots(spots,
             // If not, start the fetch and calculation, and store the promise in the cache
             distanceCache[summitCode] = (async () => {
                 try {
-                    const response = await fetch(`${baseurl}/${summitCode}`);
+                    const response = await fetch(`${baseurl}/${summitCode}`,
+                                                 { headers: { 'Accept-Encoding': 'gzip, deflate, br, zstd' } });
                     if (!response.ok) {
                         // If the response status is not OK, throw an error to be caught by the catch block
                         throw new Error('Network response was not ok.');
@@ -338,21 +344,49 @@ async function enrichSpots(spots,
 }
 
 gLatestSotaJson = null;
+gSotaEpoch = null;
 gLatestPotaJson = null;
 
-async function refreshSotaPotaJson()
-{
+async function shouldCheckNewSpots(epoch) {
+    if (!document.getElementById('autoRefreshSelector').checked) return false;
+    if (epoch === null) return true;
+    try {
+        // Fetch the latest epoch from the API
+        const response = await fetch('https://api-db2.sota.org.uk/api/spots/epoch');
+        if (!response.ok) {
+            console.error('Failed to fetch epoch data:', response.statusText);
+            return true; // safer to simply retrieve all the spots again
+        }
+
+        const latestEpoch = await response.text();
+        return epoch !== latestEpoch;
+    }
+    catch (error) {
+        console.error('Error fetching epoch or processing response:', error);
+        return true; // safer to simply retrieve all the spots again
+    }
+}
+
+async function refreshSotaPotaJson(force) {
     if (currentTabName === 'sota') {
+        if (!force && gLatestSotaJson != null && !await shouldCheckNewSpots(gSotaEpoch)) {
+            console.info('no new spots');
+            return;
+        }
         const limit = document.getElementById("historyDurationSelector").value;
-        // See SOTA API docs at https://api2.sota.org.uk/docs/index.html
-        fetch(`https://api2.sota.org.uk/api/spots/${limit}/all`)
+        fetch(`https://api-db2.sota.org.uk/api/spots/${limit}/all/all/`,
+              { headers: { 'Accept-Encoding': 'gzip, deflate, br, zstd' } })
             .then(result => result.json()) // Resolve the promise to get the JSON data
             .then(data => {
+                gSotaEpoch = data[0]?.epoch ?? null;  // assume first spot's epoch is the one
+
                 gLatestSotaJson = enrichSpots(data,
-                                              'https://api2.sota.org.uk/api/summits',
-                                              function(spot){return spot.associationCode + "/" + spot.summitCode;}, // getCodeFunc
-                                              function(spot){return new Date(`${spot.timeStamp}Z`);},
-                                              function(spot){return spot.activatorCallsign;});
+                                              'https://api-db2.sota.org.uk/api/summits',
+                                              function(spot){return new Date(`${spot.timeStamp}`);}, // getTimeFunc
+                                              function(spot){return spot.summitCode;},               // getCodeFunc
+                                              function(spot){return spot.activatorCallsign;},        // getActivatorFunc
+                                              function(spot){return `${spot.summitName}, ${spot.AltM}m, ${spot.points} points`;}); // getLocationDetailsFunc
+
                 gLatestSotaJson.then(() => {
                     console.info('SOTA Json updated');
                     updateSotaTable();
@@ -361,14 +395,20 @@ async function refreshSotaPotaJson()
             .catch(error => ({ error }));
     }
     else if (currentTabName === 'pota') {
-        fetch('https://api.pota.app/spot/activator')
+        if (!force && gLatestPotaJson != null && !await shouldCheckNewSpots(null)) {
+            console.info('no new spots');
+            return;
+        }
+        fetch('https://api.pota.app/spot/activator',
+              { headers: { 'Accept-Encoding': 'gzip, deflate, br, zstd' } })
             .then(result => result.json()) // Resolve the promise to get the JSON data
             .then(data => {
                 gLatestPotaJson = enrichSpots(data,
                                               'https://api.pota.app/park',
-                                              function(spot){return spot.reference;}, // getCodeFunc
-                                              function(spot){return new Date(`${spot.spotTime}Z`);},
-                                              function(spot){return spot.activator;});
+                                              function(spot){return new Date(`${spot.spotTime}Z`);}, // getTimeFunc
+                                              function(spot){return spot.reference;},                // getCodeFunc
+                                              function(spot){return spot.activator;},                // getActivatorFunc
+                                              function(spot){return spot.details;});                 // getLocationDetailsFunc
                 gLatestPotaJson.then(() => {
                     console.info('POTA Json updated');
                     updatePotaTable();

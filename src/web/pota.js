@@ -22,6 +22,10 @@ async function updatePotaTable()
 
         if (spot.duplicate)
             row.classList.add('duplicate-row');
+        if (spot.type && spot.type !== "" && spot.type !== "NORMAL") { // "" is a normal spot, other values are not
+            row.classList.add('duplicate-row');
+            row.classList.add('qrt-row');
+        }
 
         const formattedTime = spot.timestamp.getUTCHours().toString().padStart(2, '0') + ':' + spot.timestamp.getUTCMinutes().toString().padStart(2, '0');
         row.insertCell().textContent = formattedTime;
@@ -39,7 +43,7 @@ async function updatePotaTable()
         const frequencyCell = row.insertCell();
         const frequencyLink = document.createElement('a');
         frequencyLink.href = `#`; // Placeholder
-        frequencyLink.textContent = spot.frequency;
+        frequencyLink.textContent = (spot.hertz/1000/1000).toFixed(1)
         frequencyLink.onclick = function(event) {
             event.preventDefault(); // Prevent default link behavior
             tuneRadioKHz(spot.frequency, spot.mode);
@@ -58,15 +62,18 @@ async function updatePotaTable()
     });
 
     tbody.parentNode.replaceChild(newTbody, tbody);
+
+    console.info('POTA table updated');
 }
 
 function potaOnAppearing() {
     console.info('POTA tab appearing');
 
+    loadAutoRefreshCheckboxState();
     loadShowSpotDupsCheckboxState();
     loadModeFilterState();
 
-    refreshSotaPotaJson();
+    refreshSotaPotaJson(false);
     if (gRefreshInterval == null)
         gRefreshInterval = setInterval(refreshSotaPotaJson, 60 * 1000); // one minute
 
